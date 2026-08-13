@@ -18,6 +18,8 @@ jobs:
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SSH_PORT }} \
             -i /home/nekit/.ssh/id_rsa_github_new \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
-            echo 'Deployed at '$(date) > ~/deploy.log
-            echo 'Deployment successful'
+            cd /app && \
+            git pull origin main && \
+            docker-compose down && \
+            docker-compose up -d --build
           "

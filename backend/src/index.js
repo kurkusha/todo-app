@@ -1,124 +1,145 @@
+// backend/src/index.js
 import express from 'express';
 import cors from 'cors';
-import pkg from 'pg';
-const { Pool } = pkg;
+import {
+    getAllTodos,
+    getTodoById,
+    createTodo,
+    updateTodo,
+    deleteTodo
+} from './todos.js';
+import { testConnection, initDB } from './db.js';
 
-// ========== КОНФИГУРАЦИЯ ==========
+// ============ КОНФИГУРАЦИЯ ============
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Подключение к БД
-const pool = new Pool({
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 5432,
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
-    database: process.env.DB_NAME || 'todoapp',
-});
-
-// ========== MIDDLEWARE ==========
+// ============ MIDDLEWARE ============
 app.use(cors());
 app.use(express.json());
 
-// ========== РОУТЫ ==========
+// ============ РОУТЫ ============
 
 // Проверка здоровья
 app.get('/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
 });
 
 // Получить все задачи
 app.get('/api/todos', async (req, res) => {
     try {
-        const result = await pool.query(
-            'SELECT * FROM todos ORDER BY created_at DESC'
-        );
-        res.json(result.rows);
+        const todos = await getAllTodos();
+        res.json(todos);
     } catch (err) {
-        console.error('Error fetching todos:', err);
+        console.error('Error in GET /api/todos:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Получить задачу по ID
+app.get('/api/todos/:id', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid ID' });
+        }
+        
+        const todo = await getTodoById(id);
+        if (!todo) {
+            return res.status(404).json({ error: 'Todo not found' });
+        }
+        res.json(todo);
+    } catch (err) {
+        console.error('Error in GET /api/todos/:id:', err);
         res.status(500).json({ error: err.message });
     }
 });
 
 // Создать задачу
 app.post('/api/todos', async (req, res) => {
-    const { title } = req.body;
-    if (!title) {
-        return res.status(400).json({ error: 'Title is required' });
-    }
-    
     try {
-        const result = await pool.query(
-            'INSERT INTO todos (title) VALUES ($1) RETURNING *',
-            [title]
-        );
-        res.status(201).json(result.rows[0]);
+        const { title } = req.body;
+        const todo = await createTodo(title);
+        res.status(201).json(todo);
     } catch (err) {
-        console.error('Error creating todo:', err);
+        console.error('Error in POST /api/todos:', err);
+        if (err.message.includes('Title')) {
+            return res.status(400).json({ error: err.message });
+        }
         res.status(500).json({ error: err.message });
     }
 });
 
 // Обновить задачу
 app.put('/api/todos/:id', async (req, res) => {
-    const { id } = req.params;
-    const { completed } = req.body;
-    
     try {
-        const result = await pool.query(
-            'UPDATE todos SET completed = $1 WHERE id = $2 RETURNING *',
-            [completed, id]
-        );
-        if (result.rows.length === 0) {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid ID' });
+        }
+        
+        const todo = await updateTodo(id, req.body);
+        if (!todo) {
             return res.status(404).json({ error: 'Todo not found' });
         }
-        res.json(result.rows[0]);
+        res.json(todo);
     } catch (err) {
-        console.error('Error updating todo:', err);
+        console.error('Error in PUT /api/todos/:id:', err);
         res.status(500).json({ error: err.message });
     }
 });
 
 // Удалить задачу
 app.delete('/api/todos/:id', async (req, res) => {
-    const { id } = req.params;
-    
     try {
-        const result = await pool.query(
-            'DELETE FROM todos WHERE id = $1 RETURNING *',
-            [id]
-        );
-        if (result.rows.length === 0) {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) {
+            return res.status(400).json({ error: 'Invalid ID' });
+        }
+        
+        const todo = await deleteTodo(id);
+        if (!todo) {
             return res.status(404).json({ error: 'Todo not found' });
         }
-        res.json({ message: 'Todo deleted' });
+        res.json({ message: 'Todo deleted', todo });
     } catch (err) {
-        console.error('Error deleting todo:', err);
+        console.error('Error in DELETE /api/todos/:id:', err);
         res.status(500).json({ error: err.message });
     }
 });
 
-// ========== ЗАПУСК ==========
-app.listen(port, () => {
-    console.log(`🚀 Backend running on port ${port}`);
-    console.log(`📊 Database: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
-});
-
-// ========== ИНИЦИАЛИЗАЦИЯ БД ==========
-const initDB = async () => {
+// ============ ЗАПУСК ============
+const startServer = async () => {
     try {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS todos (
-                id SERIAL PRIMARY KEY,
-                title TEXT NOT NULL,
-                completed BOOLEAN DEFAULT false,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        console.log('✅ Database initialized');
+        // Проверяем подключение к БД
+        const connected = await testConnection();
+        if (!connected) {
+            console.error('❌ Cannot start server without database');
+            process.exit(1);
+        }
+        
+        // Инициализируем БД
+        await initDB();
+        
+        // Запускаем сервер
+        app.listen(port, () => {
+            console.log(`🚀 Backend running on port ${port}`);
+            console.log(`📊 Database: ${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
+        });
     } catch (err) {
-        console.error('❌ Database init error:', err);
+        console.error('❌ Failed to start server:', err.message);
+        process.exit(1);
     }
 };
 
-initDB();
+// Экспортируем app для тестов
+export { app };
+
+// Запускаем только если не в тестовом режиме
+if (process.env.NODE_ENV !== 'test') {
+    startServer();
+}
