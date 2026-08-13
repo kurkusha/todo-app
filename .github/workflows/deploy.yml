@@ -18,7 +18,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -p ${{ secrets.SSH_PORT }} \
             -i /home/nekit/.ssh/id_rsa_github_new \
             ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "
-            cd app && \
+            cd /home/developer/app && \
             git pull origin main && \
             docker-compose down && \
             docker-compose up -d --build
